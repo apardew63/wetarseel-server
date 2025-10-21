@@ -110,9 +110,6 @@ app.get("/profile", async (req, res) => {
 //==============
 // CONTACT CRUD
 //==============
-// --- CRUD for Contact ---
-
-//Create Contact
 app.post("/contact", async (req, res) => {
   try {
     const { name, email, phone } = req.body;
@@ -124,7 +121,6 @@ app.post("/contact", async (req, res) => {
   }
 });
 
-//Get Single Contact
 app.get("/contact/:name", async (req, res) => {
   try {
     const findContact = await contact.findOne({ name: req.params.name });
@@ -136,7 +132,6 @@ app.get("/contact/:name", async (req, res) => {
   }
 });
 
-//Update Contact
 app.put("/contact/:name", async (req, res) => {
   try {
     const updateContact = await contact.findOneAndUpdate(
@@ -152,7 +147,6 @@ app.put("/contact/:name", async (req, res) => {
   }
 });
 
-//Delete Contact
 app.delete("/contact/:name", async (req, res) => {
   try {
     const delContact = await contact.findOneAndDelete({
@@ -170,15 +164,12 @@ app.delete("/contact/:name", async (req, res) => {
 app.post("/upload-csv", upload.single("file"), async (req, res) => {
   try {
     const results = [];
-
     fs.createReadStream(req.file.path)
       .pipe(csv())
       .on("data", (data) => results.push(data))
       .on("end", async () => {
         try {
-          //inserting all contacts into mongodb
           await contact.insertMany(results);
-          //delete file after extracting data
           fs.unlinkSync(req.file.path);
           res.json({
             message: "Contacts uploaded successfully!",
@@ -193,8 +184,9 @@ app.post("/upload-csv", upload.single("file"), async (req, res) => {
   }
 });
 
-// --- CRUD for Template ---
-
+//==============
+// TEMPLATE CRUD
+//==============
 app.post("/template", async (req, res) => {
   try {
     console.log("📥 Template data received:", req.body);
@@ -213,7 +205,17 @@ app.post("/template", async (req, res) => {
   }
 });
 
-// Get Single Template by Template Name
+app.get("/template", async (req, res) => {
+  try {
+    console.log("📤 Fetching all templates...");
+    const templates = await template.find().populate("createdBy");
+    res.status(200).json(templates);
+  } catch (err) {
+    console.error("❌ Error fetching templates:", err.message);
+    res.status(500).json({ error: "Failed to fetch templates" });
+  }
+});
+
 app.get("/template/:templateName", async (req, res) => {
   try {
     const findTemplate = await template.findOne({
@@ -227,7 +229,6 @@ app.get("/template/:templateName", async (req, res) => {
   }
 });
 
-// Update Template by Template Name
 app.put("/template/:templateName", async (req, res) => {
   try {
     const updateTemplate = await template.findOneAndUpdate(
@@ -247,7 +248,6 @@ app.put("/template/:templateName", async (req, res) => {
   }
 });
 
-// Delete Template by Template Name
 app.delete("/template/:templateName", async (req, res) => {
   try {
     const delTemplate = await template.findOneAndDelete({
@@ -263,7 +263,66 @@ app.delete("/template/:templateName", async (req, res) => {
   }
 });
 
-// Socket authentication
+//==============
+// CAMPAIGN CRUD
+//==============
+const Campaign = require("./models/campaign");
+
+app.post("/campaign", async (req, res) => {
+  try {
+    const { campaignName, listName, status, type, template, createdBy } = req.body;
+    const newCampaign = new Campaign({
+      campaignName,
+      listName,
+      status,
+      type,
+      template,
+      createdBy,
+    });
+    await newCampaign.save();
+    res.status(201).json(newCampaign);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/campaign", async (req, res) => {
+  try {
+    const campaigns = await Campaign.find()
+      .populate("template")
+      .populate("createdBy")
+      .sort({ createdAt: -1 });
+    res.status(200).json(campaigns);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch campaigns" });
+  }
+});
+
+app.get("/campaign/:id", async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.id)
+      .populate("template")
+      .populate("createdBy");
+    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+    res.json(campaign);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/campaign/:id", async (req, res) => {
+  try {
+    const deleted = await Campaign.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Campaign not found" });
+    res.json({ message: "Campaign deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+//==============
+// SOCKET.IO
+//==============
 io.use(async (socket, next) => {
   try {
     const token =
@@ -271,12 +330,11 @@ io.use(async (socket, next) => {
       socket.handshake.headers?.authorization?.split(" ")[1];
     if (!token) return next(new Error("No Token"));
 
-    //validate token with Supabase
     const { data, error } = await supabaseAdmin.auth.getUser(token);
-    if (error || !data?.user) return next(new Error("Invalid token")); //reject if invalid
+    if (error || !data?.user) return next(new Error("Invalid token"));
 
-    socket.user = data.user; //attach user info to socket
-    return next(); //allow connection
+    socket.user = data.user;
+    return next();
   } catch (e) {
     return next(new Error("Authentication error"));
   }
@@ -300,14 +358,12 @@ io.on("connection", (socket) => {
       });
       await msg.save();
 
-      //update conversation last message
       await conversation.findByIdAndUpdate(payload.conversationID, {
         lastMessage: payload.body,
         lastActivityAt: new Date(),
       });
-      //braodcast to room
+
       io.to(payload.conversationID).emit("message:new", msg);
-      //send ack back to sender
       if (ack) ack({ ok: true, id: msg._id });
     } catch (err) {
       if (ack) ack({ ok: false, error: err.message });
@@ -320,16 +376,13 @@ io.on("connection", (socket) => {
       .emit("typing", { userID, conversationID, isTyping });
   });
 
-  socket.on("disconnect", () => {
-    //broadcast offline
-  });
+  socket.on("disconnect", () => {});
 });
 
+//==============
+// SERVER START
+//==============
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+server.listen(PORT, () => {
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
-
-//const PORT = process.env.PORT || 3001;
-//app.listen(PORT, () => {
-//    console.log(`Server running at http://localhost:${PORT}`);
