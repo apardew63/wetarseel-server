@@ -6,7 +6,7 @@ const mongoose = require("mongoose");
 const { createClient } = require("@supabase/supabase-js");
 const { Server } = require("socket.io");
 const { createAdapter } = require("@socket.io/redis-adapter");
-const IORedis = require("ioredis");
+const { pubClient, subClient, isRedisAvailable } = require("./redis");
 
 const contact = require("./models/contact");
 const template = require("./models/template");
@@ -48,50 +48,96 @@ const upload = multer({ dest: "uploads/" });
 // AUTH CRUD
 //==============
 
-// Redis adapter for horizontal scaling
-const pubClient = new IORedis(process.env.REDIS_URL);
-const subClient = pubClient.duplicate();
-io.adapter(createAdapter(pubClient, subClient));
+// Redis adapter for horizontal scaling (with graceful fallback)
+if (pubClient && subClient) {
+  try {
+    io.adapter(createAdapter(pubClient, subClient));
+    console.log("✅ Socket.IO: Redis adapter enabled (horizontal scaling active)");
+    
+    // Monitor Redis connection status
+    pubClient.on("ready", () => {
+      console.log("✅ Socket.IO: Redis adapter ready");
+    });
+    
+    pubClient.on("error", () => {
+      console.warn("⚠️  Socket.IO: Redis connection lost, adapter may not function properly");
+    });
+  } catch (error) {
+    console.warn("⚠️  Socket.IO: Failed to enable Redis adapter, using in-memory adapter:", error.message);
+    console.warn("⚠️  Note: Horizontal scaling will not work without Redis");
+  }
+} else {
+  console.warn("⚠️  Socket.IO: Redis clients not initialized, using in-memory adapter");
+  console.warn("⚠️  Note: Horizontal scaling will not work without Redis");
+}
 
 // Signup
 app.post("/signup", async (req, res) => {
-  console.log("Signup request received:", req.body);
-  const { email, password, firstName, lastName } = req.body;
-  if (!email || !password) {
-    console.log("Missing email or password");
-    return res.status(400).json({ error: "Email and password required" });
+  try {
+    console.log("Signup request received:", req.body);
+    const { email, password, firstName, lastName } = req.body;
+    
+    if (!email || !password) {
+      console.log("Missing email or password");
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: "Invalid email format" });
+    }
+
+    // Validate password length
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters long" });
+    }
+
+    const { data, error } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { first_name: firstName, last_name: lastName },
+    });
+
+    console.log("Supabase createUser result:", { data, error });
+
+    if (error) {
+      console.error("Signup error:", error.message);
+      return res.status(400).json({ error: error.message });
+    }
+    
+    console.log("Signup successful for:", email);
+    res.json({ user: data.user, message: "Signup successful" });
+  } catch (err) {
+    console.error("Unexpected signup error:", err);
+    res.status(500).json({ error: "Internal server error. Please try again later." });
   }
-
-  const { data, error } = await supabaseAdmin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { first_name: firstName, last_name: lastName },
-  });
-
-  console.log("Supabase createUser result:", { data, error });
-
-  if (error) {
-    console.log("Signup error:", error.message);
-    return res.status(400).json({ error: error.message });
-  }
-  console.log("Signup successful for:", email);
-  res.json({ user: data.user, message: "Signup successful" });
 });
 
 // Signin
 app.post("/signin", async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ error: "Email and password required" });
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
 
-  const { data, error } = await supabaseAdmin.auth.signInWithPassword({
-    email,
-    password,
-  });
+    const { data, error } = await supabaseAdmin.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-  if (error) return res.status(400).json({ error: error.message });
-  res.json({ user: data.user, session: data.session });
+    if (error) {
+      console.error("Signin error:", error.message);
+      return res.status(400).json({ error: error.message });
+    }
+    
+    res.json({ user: data.user, session: data.session });
+  } catch (err) {
+    console.error("Unexpected signin error:", err);
+    res.status(500).json({ error: "Internal server error. Please try again later." });
+  }
 });
 
 app.get("/profile", async (req, res) => {
