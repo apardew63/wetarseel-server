@@ -3,8 +3,18 @@ const fs = require("fs");
 
 const createContact = async (req, res) => {
   try {
-    const { name, email, phone } = req.body;
-    const newContact = new contact({ name, email, phone });
+    const { name, email, phone, tags, list, status } = req.body;
+    console.log(req.body)
+
+    const newContact = new contact({
+      name,
+      email,
+      phone,
+      tags: tags ? tags.split(",").map(t => t.trim()) : [],
+      list,
+      status
+    });
+
     await newContact.save();
     res.status(201).json(newContact);
   } catch (err) {
@@ -12,16 +22,38 @@ const createContact = async (req, res) => {
   }
 };
 
-const getContact = async (req, res) => {
+
+const getAllContacts = async (req, res) => {
   try {
-    const findContact = await contact.findOne({ name: req.params.name });
-    if (!findContact)
-      return res.status(404).json({ error: "Contact not found" });
-    res.json(findContact);
+    const contacts = await contact.find().sort({ createdAt: -1 });
+    res.json(contacts);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
+// SEARCH CONTACT BY NAME / PHONE / EMAIL
+const searchContact = async (req, res) => {
+  try {
+    const query = req.params.query;
+
+    const results = await contact.find({
+      $or: [
+        { name: { $regex: query, $options: "i" } },
+        { phone: { $regex: query, $options: "i" } },
+        { email: { $regex: query, $options: "i" } }
+      ],
+    });
+
+    if (!results.length)
+      return res.status(404).json([]);
+
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 
 const updateContact = async (req, res) => {
   try {
@@ -75,4 +107,4 @@ const uploadContactsCSV = async (req, res) => {
   }
 };
 
-module.exports = { createContact, getContact, updateContact, deleteContact, uploadContactsCSV };
+module.exports = { createContact, getAllContacts, searchContact, updateContact, deleteContact, uploadContactsCSV };

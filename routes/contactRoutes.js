@@ -1,6 +1,6 @@
 const express = require("express");
 const multer = require("multer");
-const { createContact, getContact, updateContact, deleteContact, uploadContactsCSV } = require("../controllers/contactController");
+const { createContact, getAllContacts, updateContact, deleteContact, uploadContactsCSV, searchContact } = require("../controllers/contactController");
 
 const router = express.Router();
 
@@ -8,7 +8,8 @@ const router = express.Router();
 const upload = multer({ dest: "uploads/" });
 
 router.post("/", createContact);
-router.get("/:name", getContact);
+router.get("/", getAllContacts);
+router.get("/search/:query", searchContact);
 router.put("/:name", updateContact);
 router.delete("/:name", deleteContact);
 router.post("/upload-csv", upload.single("file"), uploadContactsCSV);
